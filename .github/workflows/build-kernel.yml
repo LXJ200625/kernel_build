@@ -64,3 +64,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: output_kernel
+          path: out/arch/arm64/boot/Image.gz-dtb
