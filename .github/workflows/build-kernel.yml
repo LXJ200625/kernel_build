@@ -26,6 +26,9 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
+      - name: Fix Python 3 compatibility
+        run: |
+          sed -i 's/print >> sys.stderr, line,/print(line, file=sys.stderr, end="")/g' kernel-source/scripts/gcc-wrapper.py
       - name: Build kernel
         run: |
           export KBUILD_BUILD_USER="zclkkk"
