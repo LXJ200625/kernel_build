@@ -22,17 +22,7 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      # 新增步骤：彻底删除DTBO编译规则（从Makefile源头屏蔽）
-      - name: 彻底删除DTBO编译规则
-        run: |
-          # 修改arch/arm64/boot/Makefile，注释dtbo.img编译逻辑
-          cd kernel-source/arch/arm64/boot
-          sed -i 's/^dtbo.img:.*//g' Makefile
-          sed -i 's/^	$(call if_changed,dtboimg)/#	$(call if_changed,dtboimg)/g' Makefile
-          # 修改arch/arm64/Makefile，删除dtbo.img调用规则
-          cd ../
-          sed -i 's/^dtbo.img:.*//g' Makefile
-      - name: Build kernel（已屏蔽DTBO）
+      - name: Build kernel（仅编译内核镜像，不触发任何其他目标）
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
@@ -42,22 +32,17 @@ jobs:
                                   ${{ env.BUILD_ARGS }} \
                                   CLANG_TRIPLE=aarch64-linux-gnu- \
                                   CROSS_COMPILE=$GITHUB_WORKSPACE/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
-                                  CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
-                                  CONFIG_BUILD_ARM64_DTBO=n"
+                                  CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi-"
           cd kernel-source
+          # 先加载配置
           make ${args} ${{ env.KERNEL_CONFIG }}
-          make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args}
+          # 仅编译内核镜像目标（Image.gz-dtb），彻底跳过DTBO等其他构建
+          make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args} arch/arm64/boot/Image.gz-dtb
       - name: Package kernel
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_SOURCE_BRANCH }} AnyKernel3 && rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
           if [[ -f out/arch/arm64/boot/Image.gz-dtb ]]; then
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          elif [[ -f out/arch/arm64/boot/Image-dtb ]]; then
-            cp out/arch/arm64/boot/Image-dtb AnyKernel3/Image-dtb
-          elif [[ -f out/arch/arm64/boot/Image.gz ]]; then
-            cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
-          elif [[ -f out/arch/arm64/boot/Image ]]; then
-            cp out/arch/arm64/boot/Image AnyKernel3/Image
           fi
       - name: Upload kernel to artifact
         uses: actions/upload-artifact@v4
