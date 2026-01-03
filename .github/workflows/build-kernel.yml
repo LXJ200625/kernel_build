@@ -22,20 +22,28 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Build kernel
+      # 新增步骤：彻底删除DTBO编译规则（从Makefile源头屏蔽）
+      - name: 彻底删除DTBO编译规则
+        run: |
+          # 修改arch/arm64/boot/Makefile，注释dtbo.img编译逻辑
+          cd kernel-source/arch/arm64/boot
+          sed -i 's/^dtbo.img:.*//g' Makefile
+          sed -i 's/^	$(call if_changed,dtboimg)/#	$(call if_changed,dtboimg)/g' Makefile
+          # 修改arch/arm64/Makefile，删除dtbo.img调用规则
+          cd ../
+          sed -i 's/^dtbo.img:.*//g' Makefile
+      - name: Build kernel（已屏蔽DTBO）
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
           export PATH=$GITHUB_WORKSPACE/clang/bin:${PATH}
-          
           args="                  ARCH=arm64 \
                                   O=../out \
                                   ${{ env.BUILD_ARGS }} \
                                   CLANG_TRIPLE=aarch64-linux-gnu- \
                                   CROSS_COMPILE=$GITHUB_WORKSPACE/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
                                   CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
-                                  CONFIG_BUILD_ARM64_DTBO=n \
-                                  dtbo.img="
+                                  CONFIG_BUILD_ARM64_DTBO=n"
           cd kernel-source
           make ${args} ${{ env.KERNEL_CONFIG }}
           make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args}
@@ -51,9 +59,6 @@ jobs:
           elif [[ -f out/arch/arm64/boot/Image ]]; then
             cp out/arch/arm64/boot/Image AnyKernel3/Image
           fi
-          #if [ -f out/arch/arm64/boot/dtbo.img ]; then
-            #cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
-          #fi
       - name: Upload kernel to artifact
         uses: actions/upload-artifact@v4
         with:
