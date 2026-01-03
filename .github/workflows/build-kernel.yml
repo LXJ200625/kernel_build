@@ -22,7 +22,7 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Build kernel（仅编译内核镜像，不触发任何其他目标）
+      - name: Build kernel（仅编译内核镜像，修正路径错误）
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
@@ -36,8 +36,8 @@ jobs:
           cd kernel-source
           # 先加载配置
           make ${args} ${{ env.KERNEL_CONFIG }}
-          # 仅编译内核镜像目标（Image.gz-dtb），彻底跳过DTBO等其他构建
-          make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args} arch/arm64/boot/Image.gz-dtb
+          # 关键修正：只写目标名Image.gz-dtb，不写完整路径
+          make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args} Image.gz-dtb
       - name: Package kernel
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_SOURCE_BRANCH }} AnyKernel3 && rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
