@@ -23,14 +23,16 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Apply official KernelSU + 4.14补丁
+      - name: Apply official KernelSU + 4.14补丁（修复文件不存在）
         run: |
           cd kernel-source
-          # 下载适配4.14的KernelSU脚本
+          # 1. 下载并执行KSU脚本
           curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || { echo "❌ 下载脚本失败"; exit 1; }
           bash setup.sh v3.0.0-30-legacy || { echo "❌ 执行脚本失败"; exit 1; }
           rm -f setup.sh
-          # 提前打4.14专属补丁
+          # 2. 关键修复：硬复制KSU文件到drivers目录（解决软链接失效）
+          cp -rf KernelSU/kernel/drivers/kernelsu/* drivers/kernelsu/
+          # 3. 原有的4.14专属补丁（现在文件存在，可正常执行）
           sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' drivers/kernelsu/kp_util.c
           sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
           sed -i 's/mmap_write_unlock(mm)/up_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
