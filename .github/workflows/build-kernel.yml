@@ -22,24 +22,25 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Apply KernelSU + 4.14补丁（云环境自动找路径）
+      - name: Apply KernelSU + 4.14补丁（彻底解决路径问题）
         run: |
           cd kernel-source
           # 1. 执行KSU脚本
-          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || exit 1
-          bash setup.sh v3.0.0-30-legacy || exit 1
+          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || { echo "KSU脚本下载失败"; exit 1; }
+          bash setup.sh v3.0.0-30-legacy || { echo "KSU脚本执行失败"; exit 1; }
           rm -f setup.sh
-          # 2. 云环境自动找KernelSU里的kernelsu文件路径
-          echo "===== 自动检测KernelSU文件位置 ====="
-          KSU_PATH=$(find KernelSU/ -name "ksu.c" | head -n 1 | xargs dirname)
-          echo "找到kernelsu文件在: $KSU_PATH"
-          # 3. 复制到drivers/kernelsu
-          mkdir -p drivers/kernelsu
-          cp -rf $KSU_PATH/* drivers/kernelsu/
-          # 4. 4.14代码修复
-          sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' drivers/kernelsu/kp_util.c
-          sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
-          sed -i 's/pgd_index(addr)/pgd_index((unsigned long)addr)/g' drivers/kernelsu/kp_util.c
+          # 2. 云环境自动定位KernelSU文件（无需手动指定路径）
+          echo "=== 自动搜索KernelSU文件位置 ==="
+          # 找到ksu.c所在目录（核心文件，一定存在）
+          KSU_FILE_DIR=$(find ./KernelSU -name "ksu.c" | xargs -I {} dirname {})
+          echo "找到KernelSU核心文件在: $KSU_FILE_DIR"
+          # 3. 强制复制到内核drivers目录
+          mkdir -p ./drivers/kernelsu
+          cp -rf $KSU_FILE_DIR/* ./drivers/kernelsu/
+          # 4. 4.14内核代码适配修复
+          sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' ./drivers/kernelsu/kp_util.c
+          sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' ./drivers/kernelsu/ksu.c
+          sed -i 's/pgd_index(addr)/pgd_index((unsigned long)addr)/g' ./drivers/kernelsu/kp_util.c
       - name: Add 4.14专属KernelSU配置
         run: |
           cd kernel-source
@@ -50,24 +51,25 @@ jobs:
           echo "CONFIG_MODULES=y" >> .config
           echo "CONFIG_MODULE_UNLOAD=y" >> .config
           echo "CONFIG_MODULES_USE_ELF_REL=y" >> .config
-      - name: Build kernel (4.14兼容参数)
+      - name: Build kernel (4.14兼容编译)
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
           export PATH=$GITHUB_WORKSPACE/clang/bin:${PATH}
-          args="                  ARCH=arm64 \
-                                  O=../out \
-                                  ${{ env.BUILD_ARGS }} \
-                                  CLANG_TRIPLE=aarch64-linux-gnu- \
-                                  CROSS_COMPILE=$GITHUB_WORKSPACE/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
-                                  CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
-                                  CC_FLAGS="-Wno-error=gnu-variable-sized-type-not-at-end -Wno-error=unknown-attributes""
+          args="ARCH=arm64 \
+                O=../out \
+                ${{ env.BUILD_ARGS }} \
+                CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=$GITHUB_WORKSPACE/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+                CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
+                CC_FLAGS="-Wno-error=gnu-variable-sized-type-not-at-end -Wno-error=unknown-attributes""
           cd kernel-source
           make ${args} ${{ env.KERNEL_CONFIG }}
           make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args} Image.gz-dtb
       - name: Package kernel
         run: |
-          git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_SOURCE_BRANCH }} AnyKernel3 && rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
+          git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_SOURCE_BRANCH }} AnyKernel3
+          rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
       - name: Upload artifact
         uses: actions/upload-artifact@v4
