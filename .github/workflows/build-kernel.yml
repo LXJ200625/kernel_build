@@ -14,43 +14,59 @@ jobs:
           echo "KERNEL_SOURCE_BRANCH=$(cat config.env | grep -w "KERNEL_SOURCE_BRANCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
           echo "KERNEL_CONFIG=$(cat config.env | grep -w "KERNEL_CONFIG" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
           echo "BUILD_ARGS=$(cat config.env | grep -w "BUILD_ARGS" | head -n 1 | cut -d ":" -f 2)" >> $GITHUB_ENV
-      - name: Pull toolchain
+      - name: Pull toolchain (适配4.14内核)
         run: |
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64-linux-android-4.9
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 arm-linux-androideabi-4.9
-          mkdir clang && curl https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android14-dev/clang-r487747c.tar.gz -RLO && tar -C clang/ -xf clang-*.tar.gz
+          # 换4.14内核兼容的clang版本（避免语法冲突）
+          mkdir clang && curl https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-release/clang-r416183b.tar.gz -RLO && tar -C clang/ -xf clang-*.tar.gz
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Apply official KernelSU（无冲突，完善错误处理）
+      - name: Apply official KernelSU + 4.14补丁
         run: |
           cd kernel-source
-          # 下载失败/执行失败直接中断，添加日志提示
-          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || { echo "❌ 下载KernelSU脚本失败"; exit 1; }
-          bash setup.sh v3.0.0-30-legacy || { echo "❌ 执行KernelSU脚本失败"; exit 1; }
-          rm -f setup.sh  # 清理临时文件
-      - name: Build kernel（仅编译内核镜像，修正路径错误）
+          # 下载适配4.14的KernelSU脚本
+          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || { echo "❌ 下载脚本失败"; exit 1; }
+          bash setup.sh v3.0.0-30-legacy || { echo "❌ 执行脚本失败"; exit 1; }
+          rm -f setup.sh
+          # 提前打4.14专属补丁
+          sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' drivers/kernelsu/kp_util.c
+          sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
+          sed -i 's/mmap_write_unlock(mm)/up_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
+          sed -i 's/pgd_index(addr)/pgd_index((unsigned long)addr)/g' drivers/kernelsu/kp_util.c
+      - name: Add 4.14专属KernelSU配置
+        run: |
+          cd kernel-source
+          echo "CONFIG_KSU=y" >> .config
+          echo "CONFIG_KSU_SYSCALL_HOOK=y" >> .config
+          echo "CONFIG_HAVE_SYSCALL_TRACEPOINTS=y" >> .config
+          echo "CONFIG_KRETPROBES=y" >> .config
+          echo "CONFIG_MODULES=y" >> .config
+          echo "CONFIG_MODULE_UNLOAD=y" >> .config
+          echo "CONFIG_MODULES_USE_ELF_REL=y" >> .config
+      - name: Build kernel (4.14兼容编译参数)
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
           export PATH=$GITHUB_WORKSPACE/clang/bin:${PATH}
+          # 加4.14兼容的编译flag，避免语法错误
           args="                  ARCH=arm64 \
                                   O=../out \
                                   ${{ env.BUILD_ARGS }} \
                                   CLANG_TRIPLE=aarch64-linux-gnu- \
                                   CROSS_COMPILE=$GITHUB_WORKSPACE/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
-                                  CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi-"
+                                  CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- \
+                                  CC_FLAGS="-Wno-error=gnu-variable-sized-type-not-at-end -Wno-error=unknown-attributes""
           cd kernel-source
           make ${args} ${{ env.KERNEL_CONFIG }}
           make -j$(($(getconf _NPROCESSORS_ONLN) * 2)) ${args} Image.gz-dtb
       - name: Package kernel
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_SOURCE_BRANCH }} AnyKernel3 && rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
-          if [[ -f out/arch/arm64/boot/Image.gz-dtb ]]; then
-            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          fi
-      - name: Upload kernel to artifact
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: xd-kernel
-          path: out/arch/arm64/boot/Image.gz-dtb
+          path: AnyKernel3/*
