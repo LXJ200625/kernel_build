@@ -18,24 +18,23 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64-linux-android-4.9
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 arm-linux-androideabi-4.9
-          # 换4.14内核兼容的clang版本（避免语法冲突）
           mkdir clang && curl https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-release/clang-r416183b.tar.gz -RLO && tar -C clang/ -xf clang-*.tar.gz
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Apply official KernelSU + 4.14补丁（修复文件不存在）
+      - name: Apply KernelSU + 4.14补丁（rsuntk/KernelSU专属路径）
         run: |
           cd kernel-source
-          # 1. 下载并执行KSU脚本
-          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || { echo "❌ 下载脚本失败"; exit 1; }
-          bash setup.sh v3.0.0-30-legacy || { echo "❌ 执行脚本失败"; exit 1; }
+          # 1. 执行KSU脚本
+          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || exit 1
+          bash setup.sh v3.0.0-30-legacy || exit 1
           rm -f setup.sh
-          # 2. 关键修复：硬复制KSU文件到drivers目录（解决软链接失效）
-          cp -rf KernelSU/kernel/drivers/kernelsu/* drivers/kernelsu/
-          # 3. 原有的4.14专属补丁（现在文件存在，可正常执行）
+          # 2. rsuntk/KernelSU的文件实际路径：KernelSU/drivers/kernelsu
+          mkdir -p drivers/kernelsu
+          cp -rf KernelSU/drivers/kernelsu/* drivers/kernelsu/
+          # 3. 4.14代码修复
           sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' drivers/kernelsu/kp_util.c
           sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
-          sed -i 's/mmap_write_unlock(mm)/up_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
           sed -i 's/pgd_index(addr)/pgd_index((unsigned long)addr)/g' drivers/kernelsu/kp_util.c
       - name: Add 4.14专属KernelSU配置
         run: |
@@ -47,12 +46,11 @@ jobs:
           echo "CONFIG_MODULES=y" >> .config
           echo "CONFIG_MODULE_UNLOAD=y" >> .config
           echo "CONFIG_MODULES_USE_ELF_REL=y" >> .config
-      - name: Build kernel (4.14兼容编译参数)
+      - name: Build kernel (4.14兼容参数)
         run: |
           export KBUILD_BUILD_USER="zclkkk"
           export KBUILD_BUILD_HOST="workspace"
           export PATH=$GITHUB_WORKSPACE/clang/bin:${PATH}
-          # 加4.14兼容的编译flag，避免语法错误
           args="                  ARCH=arm64 \
                                   O=../out \
                                   ${{ env.BUILD_ARGS }} \
