@@ -22,17 +22,21 @@ jobs:
       - name: Pull kernel source
         run: |
           git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} kernel-source
-      - name: Apply KernelSU + 4.14补丁（rsuntk/KernelSU专属路径）
+      - name: Apply KernelSU + 4.14补丁（云环境自动找路径）
         run: |
           cd kernel-source
           # 1. 执行KSU脚本
           curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" -o setup.sh || exit 1
           bash setup.sh v3.0.0-30-legacy || exit 1
           rm -f setup.sh
-          # 2. rsuntk/KernelSU的文件实际路径：KernelSU/drivers/kernelsu
+          # 2. 云环境自动找KernelSU里的kernelsu文件路径
+          echo "===== 自动检测KernelSU文件位置 ====="
+          KSU_PATH=$(find KernelSU/ -name "ksu.c" | head -n 1 | xargs dirname)
+          echo "找到kernelsu文件在: $KSU_PATH"
+          # 3. 复制到drivers/kernelsu
           mkdir -p drivers/kernelsu
-          cp -rf KernelSU/drivers/kernelsu/* drivers/kernelsu/
-          # 3. 4.14代码修复
+          cp -rf $KSU_PATH/* drivers/kernelsu/
+          # 4. 4.14代码修复
           sed -i 's/#include <linux\/pgtable.h>/#include <linux\/pgtable-arm64.h>/g' drivers/kernelsu/kp_util.c
           sed -i 's/mmap_write_lock(mm)/down_write(\&mm->mmap_sem)/g' drivers/kernelsu/ksu.c
           sed -i 's/pgd_index(addr)/pgd_index((unsigned long)addr)/g' drivers/kernelsu/kp_util.c
